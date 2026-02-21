@@ -599,24 +599,28 @@ export class ReadFileTool extends BaseTool<"read_file"> {
 		const finalModelSupportsImages = task.api.getModel().info.supportsImages ?? false
 		const imagesToInclude = finalModelSupportsImages ? allImages : []
 
+		// Ensure we always push a result, even if empty
+		// This prevents the agent from waiting indefinitely for a tool result
+		const resultToPush = finalResult || "No files were read or processed."
+
 		if (statusMessage || imagesToInclude.length > 0) {
 			const result = formatResponse.toolResult(
-				statusMessage || finalResult,
+				statusMessage || resultToPush,
 				imagesToInclude.length > 0 ? imagesToInclude : undefined,
 			)
 
 			if (typeof result === "string") {
-				pushToolResult(statusMessage ? `${result}\n${finalResult}` : result)
+				pushToolResult(statusMessage ? `${result}\n${resultToPush}` : result)
 			} else {
 				if (statusMessage) {
-					const textBlock = { type: "text" as const, text: finalResult }
+					const textBlock = { type: "text" as const, text: resultToPush }
 					pushToolResult([...result, textBlock] as any)
 				} else {
 					pushToolResult(result as any)
 				}
 			}
 		} else {
-			pushToolResult(finalResult)
+			pushToolResult(resultToPush)
 		}
 	}
 

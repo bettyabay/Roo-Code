@@ -55,7 +55,11 @@ describe("writeFilePostHook", () => {
 	})
 
 	it("does nothing when intentId is undefined (falsy)", async () => {
-		await writeFilePostHook({ path: "src/foo.ts", content: "x" }, { success: true }, { workspaceRoot })
+		await writeFilePostHook(
+			{ path: "src/foo.ts", content: "x" },
+			{ success: true },
+			{ intentId: null, workspaceRoot },
+		)
 		expect(mockAppendToTraceLog).not.toHaveBeenCalled()
 		expect(mockUpdateIntentMap).not.toHaveBeenCalled()
 	})

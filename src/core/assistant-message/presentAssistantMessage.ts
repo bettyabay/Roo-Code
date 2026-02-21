@@ -50,6 +50,45 @@ import { writeFilePreHook } from "../../hooks/preHooks/writeFile"
 import { writeFilePostHook } from "../../hooks/postHooks/writeFile"
 
 /**
+ * Timeout for tool execution to prevent indefinite blocking.
+ * Read-only tools should complete quickly, but we add a safety timeout.
+ */
+const TOOL_EXECUTION_TIMEOUT_MS = 60_000 // 60 seconds
+
+/**
+ * Wraps tool execution with a timeout to prevent indefinite blocking.
+ * If the tool execution exceeds the timeout, returns an error result.
+ */
+async function executeToolWithTimeout<T>(
+	toolName: string,
+	toolExecution: () => Promise<T>,
+	pushToolResult: (content: ToolResponse) => void,
+	handleError: (action: string, error: Error) => Promise<void>,
+): Promise<T | void> {
+	const timeoutPromise = new Promise<never>((_, reject) => {
+		setTimeout(() => {
+			reject(new Error(`Tool execution timeout: ${toolName} exceeded ${TOOL_EXECUTION_TIMEOUT_MS}ms`))
+		}, TOOL_EXECUTION_TIMEOUT_MS)
+	})
+
+	try {
+		return await Promise.race([toolExecution(), timeoutPromise])
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("Tool execution timeout")) {
+			console.error(`[presentAssistantMessage] ${error.message}`)
+			pushToolResult(
+				formatResponse.toolError(
+					`Tool execution timed out after ${TOOL_EXECUTION_TIMEOUT_MS}ms. The operation may still be in progress.`,
+				),
+			)
+			await handleError(`executing ${toolName}`, error)
+		} else {
+			throw error
+		}
+	}
+}
+
+/**
  * Processes and presents assistant message content to the user interface.
  *
  * This function is the core message handling system that:
@@ -300,6 +339,27 @@ export async function presentAssistantMessage(cline: Task) {
 				content = content.replace(/\s?<\/thinking>/g, "")
 			}
 
+			// For partial blocks, check if content has actually changed to avoid duplicate messages
+			// This prevents repeated "Roo said" messages when presentAssistantMessage is called
+			// multiple times for the same streaming block
+			if (block.partial) {
+				const lastTextContent = (cline as any).lastTextContentForBlock?.[cline.currentStreamingContentIndex]
+				if (lastTextContent === content) {
+					// Content hasn't changed, skip sending duplicate message
+					break
+				}
+				// Track the content we're about to send
+				if (!(cline as any).lastTextContentForBlock) {
+					;(cline as any).lastTextContentForBlock = {}
+				}
+				;(cline as any).lastTextContentForBlock[cline.currentStreamingContentIndex] = content
+			} else {
+				// Clear tracking when block is complete
+				if ((cline as any).lastTextContentForBlock) {
+					delete (cline as any).lastTextContentForBlock[cline.currentStreamingContentIndex]
+				}
+			}
+
 			await cline.say("text", content, undefined, block.partial)
 			break
 		}
@@ -429,9 +489,18 @@ export async function presentAssistantMessage(cline: Task) {
 				const customTool = stateExperiments?.customTools ? customToolRegistry.get(block.name) : undefined
 				const isKnownTool = isValidToolName(String(block.name), stateExperiments)
 				if (isKnownTool && !block.nativeArgs && !customTool) {
-					const errorMessage =
+					// Provide tool-specific guidance for common tools
+					let errorMessage =
 						`Invalid tool call for '${block.name}': missing nativeArgs. ` +
 						`This usually means the model streamed invalid or incomplete arguments and the call could not be finalized.`
+
+					// Add specific guidance for select_active_intent
+					if (block.name === "select_active_intent") {
+						errorMessage +=
+							`\n\nFor select_active_intent, you must provide intent_id parameter. ` +
+							`First read .orchestration/active_intents.yaml to find available intent IDs, ` +
+							`then call select_active_intent with a valid ID like: select_active_intent({"intent_id": "INT-001"})`
+					}
 
 					cline.consecutiveMistakeCount++
 					try {
@@ -686,11 +755,25 @@ export async function presentAssistantMessage(cline: Task) {
 			}
 
 			// Gatekeeper: require an active intent for all tools except select_active_intent (Phase 1 / orchestration)
-			if (!block.partial && block.name !== "select_active_intent" && !cline.currentIntentId) {
+			// Allow read-only tools to check for intents: read_file, list_files, codebase_search, search_files
+			const readOnlyTools = ["read_file", "list_files", "codebase_search", "search_files"]
+			const isReadOnlyTool = readOnlyTools.includes(block.name)
+
+			if (!block.partial && block.name !== "select_active_intent" && !cline.currentIntentId && !isReadOnlyTool) {
 				const gatekeeperError =
-					"No active intent selected. You must call select_active_intent with a valid intent ID (INT-XXX) before using other tools."
+					"No active intent selected. You must call select_active_intent with a valid intent ID (INT-XXX) before using other tools. You can use read_file or list_files to check .orchestration/active_intents.yaml for available intent IDs."
 				pushToolResult(formatResponse.toolError(gatekeeperError))
 				break
+			}
+
+			// Log tool execution for debugging
+			if (!block.partial) {
+				console.log(
+					`[presentAssistantMessage] Executing tool: ${block.name} (index: ${cline.currentStreamingContentIndex}/${cline.assistantMessageContent.length - 1})`,
+				)
+				console.log(
+					`[presentAssistantMessage] State: userMessageContentReady=${cline.userMessageContentReady}, didCompleteReadingStream=${cline.didCompleteReadingStream}`,
+				)
 			}
 
 			switch (block.name) {
@@ -698,9 +781,16 @@ export async function presentAssistantMessage(cline: Task) {
 					if (block.partial) break
 					const intentId = (block.nativeArgs?.intent_id ?? block.params?.intent_id) as string | undefined
 					if (!intentId) {
-						pushToolResult(
-							formatResponse.toolError("select_active_intent requires intent_id (e.g. INT-001)."),
-						)
+						// Provide helpful guidance: agent needs to read active_intents.yaml first
+						const errorMessage = `select_active_intent requires intent_id parameter (format: INT-XXX, e.g. INT-001).
+
+To find available intent IDs:
+1. First, read the file: .orchestration/active_intents.yaml
+2. Look for intent entries with IDs like INT-001, INT-002, etc.
+3. Then call select_active_intent with one of those IDs
+
+Example: select_active_intent({"intent_id": "INT-001"})`
+						pushToolResult(formatResponse.toolError(errorMessage))
 						break
 					}
 					const preHookResult = await selectActiveIntentPreHook(
@@ -869,32 +959,57 @@ export async function presentAssistantMessage(cline: Task) {
 					break
 				case "read_file":
 					// Type assertion is safe here because we're in the "read_file" case
-					await readFileTool.handle(cline, block as ToolUse<"read_file">, {
-						askApproval,
-						handleError,
+					// Wrap with timeout to prevent blocking on slow approvals
+					await executeToolWithTimeout(
+						"read_file",
+						() =>
+							readFileTool.handle(cline, block as ToolUse<"read_file">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							}),
 						pushToolResult,
-					})
+						handleError,
+					)
 					break
 				case "list_files":
-					await listFilesTool.handle(cline, block as ToolUse<"list_files">, {
-						askApproval,
-						handleError,
+					await executeToolWithTimeout(
+						"list_files",
+						() =>
+							listFilesTool.handle(cline, block as ToolUse<"list_files">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							}),
 						pushToolResult,
-					})
+						handleError,
+					)
 					break
 				case "codebase_search":
-					await codebaseSearchTool.handle(cline, block as ToolUse<"codebase_search">, {
-						askApproval,
-						handleError,
+					await executeToolWithTimeout(
+						"codebase_search",
+						() =>
+							codebaseSearchTool.handle(cline, block as ToolUse<"codebase_search">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							}),
 						pushToolResult,
-					})
+						handleError,
+					)
 					break
 				case "search_files":
-					await searchFilesTool.handle(cline, block as ToolUse<"search_files">, {
-						askApproval,
-						handleError,
+					await executeToolWithTimeout(
+						"search_files",
+						() =>
+							searchFilesTool.handle(cline, block as ToolUse<"search_files">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							}),
 						pushToolResult,
-					})
+						handleError,
+					)
 					break
 				case "execute_command":
 					await executeCommandTool.handle(cline, block as ToolUse<"execute_command">, {
@@ -1089,6 +1204,9 @@ export async function presentAssistantMessage(cline: Task) {
 			// true when out of bounds. This gracefully allows the stream to
 			// continue on and all potential content blocks be presented.
 			// Last block is complete and it is finished executing
+			console.log(
+				`[presentAssistantMessage] Last block complete, setting userMessageContentReady=true (tool: ${block.name})`,
+			)
 			cline.userMessageContentReady = true // Will allow `pWaitFor` to continue.
 		}
 
@@ -1096,7 +1214,13 @@ export async function presentAssistantMessage(cline: Task) {
 		// when it's ready).
 		// Need to increment regardless, so when read stream calls this function
 		// again it will be streaming the next block.
+		const previousIndex = cline.currentStreamingContentIndex
 		cline.currentStreamingContentIndex++
+
+		// Clean up tracking for the previous block when moving to next
+		if ((cline as any).lastTextContentForBlock && previousIndex !== undefined) {
+			delete (cline as any).lastTextContentForBlock[previousIndex]
+		}
 
 		if (cline.currentStreamingContentIndex < cline.assistantMessageContent.length) {
 			// There are already more content blocks to stream, so we'll call
@@ -1107,6 +1231,9 @@ export async function presentAssistantMessage(cline: Task) {
 			// CRITICAL FIX: If we're out of bounds and the stream is complete, set userMessageContentReady
 			// This handles the case where assistantMessageContent is empty or becomes empty after processing
 			if (cline.didCompleteReadingStream) {
+				console.log(
+					`[presentAssistantMessage] Out of bounds and stream complete, setting userMessageContentReady=true`,
+				)
 				cline.userMessageContentReady = true
 			}
 		}

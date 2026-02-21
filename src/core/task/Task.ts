@@ -1381,6 +1381,25 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const state = provider ? await provider.getState() : undefined
 		const approval = await checkAutoApproval({ state, ask: type, text, isProtected })
 
+		// Log auto-approval decisions for debugging read-only tool issues
+		if (type === "tool" && text) {
+			try {
+				const tool = JSON.parse(text || "{}")
+				if (
+					tool.tool === "readFile" ||
+					tool.tool === "listFiles" ||
+					tool.tool === "codebaseSearch" ||
+					tool.tool === "searchFiles"
+				) {
+					console.log(
+						`[Task#ask] Auto-approval decision for ${tool.tool}: ${approval.decision} (alwaysAllowReadOnly: ${state?.alwaysAllowReadOnly ?? false})`,
+					)
+				}
+			} catch {
+				// Ignore parse errors
+			}
+		}
+
 		if (approval.decision === "approve") {
 			this.approveAsk()
 		} else if (approval.decision === "deny") {
@@ -2574,7 +2593,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					await this.say("user_feedback", text, images)
 				}
 
+				// Reset mistake counter AND clear failure flags to prevent infinite retry loop
 				this.consecutiveMistakeCount = 0
+				this.didToolFailInCurrentTurn = false
+				this.didRejectTool = false
+				this.didAlreadyUseTool = false
 			}
 
 			// Getting verbose details is an expensive operation, it uses ripgrep to

@@ -403,7 +403,8 @@ export async function activate(context: vscode.ExtensionContext) {
 			{ path: context.extensionPath, pattern: "**/*.ts" },
 			{ path: path.join(context.extensionPath, "../packages/types"), pattern: "**/*.ts" },
 			{ path: path.join(context.extensionPath, "../packages/telemetry"), pattern: "**/*.ts" },
-			{ path: path.join(context.extensionPath, "node_modules/@roo-code/cloud"), pattern: "**/*" },
+			// REMOVED: node_modules watcher - too expensive, watches thousands of files
+			// If needed, use specific pattern: { path: path.join(context.extensionPath, "node_modules/@roo-code/cloud"), pattern: "**/*.js" }
 		]
 
 		console.log(
@@ -413,8 +414,21 @@ export async function activate(context: vscode.ExtensionContext) {
 		// Create a debounced reload function to prevent excessive reloads
 		let reloadTimeout: NodeJS.Timeout | undefined
 		const DEBOUNCE_DELAY = 1_000
+		const MIN_RELOAD_INTERVAL = 5_000 // 5 seconds minimum between reloads (prevents rapid reload cycles)
+		let lastReloadTime = 0
+
+		// Store watchers for cleanup to prevent memory leaks
+		const watchers: vscode.FileSystemWatcher[] = []
 
 		const debouncedReload = (uri: vscode.Uri) => {
+			const now = Date.now()
+
+			// Rate limiting: prevent rapid reload cycles that exhaust system resources
+			if (now - lastReloadTime < MIN_RELOAD_INTERVAL) {
+				console.log(`♻️ Reload throttled (last reload ${now - lastReloadTime}ms ago)`)
+				return
+			}
+
 			if (reloadTimeout) {
 				clearTimeout(reloadTimeout)
 			}
@@ -422,6 +436,13 @@ export async function activate(context: vscode.ExtensionContext) {
 			console.log(`♻️ ${uri.fsPath} changed; scheduling reload...`)
 
 			reloadTimeout = setTimeout(() => {
+				lastReloadTime = Date.now()
+
+				// Cleanup watchers before reload to prevent accumulation across reload cycles
+				console.log(`♻️ Cleaning up ${watchers.length} watchers before reload...`)
+				watchers.forEach((watcher) => watcher.dispose())
+				watchers.length = 0
+
 				console.log(`♻️ Reloading host after debounce delay...`)
 				vscode.commands.executeCommand("workbench.action.reloadWindow")
 			}, DEBOUNCE_DELAY)
@@ -436,15 +457,18 @@ export async function activate(context: vscode.ExtensionContext) {
 			watcher.onDidCreate(debouncedReload)
 			watcher.onDidDelete(debouncedReload)
 
+			watchers.push(watcher)
 			context.subscriptions.push(watcher)
 		})
 
-		// Clean up the timeout on deactivation
+		// Clean up the timeout and watchers on deactivation
 		context.subscriptions.push({
 			dispose: () => {
 				if (reloadTimeout) {
 					clearTimeout(reloadTimeout)
 				}
+				watchers.forEach((watcher) => watcher.dispose())
+				watchers.length = 0
 			},
 		})
 	}

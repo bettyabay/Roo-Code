@@ -71,7 +71,7 @@ export function getRulesSection(cwd: string, settings?: SystemPromptSettings): s
 
 RULES
 
-- You must call the select_active_intent tool with a valid intent ID (format INT-XXX, e.g. INT-001) before using write_to_file, execute_command, or other mutating tools. If no intent is selected, those tools will be blocked. Call select_active_intent first when the user asks you to change code or run commands.
+- **CRITICAL: You MUST call select_active_intent FIRST before using ANY tools.** If you try to use any tool (including read_file, list_files, write_to_file, execute_command, etc.) without selecting an intent first, the tool will be blocked with an error message "No active intent selected". To select an intent: Call select_active_intent with a valid intent ID in format INT-XXX (e.g., INT-001). If you don't know which intent ID to use, ask the user or try common IDs like INT-001. Only after successfully selecting an intent can you use other tools.
 - The project base directory is: ${cwd.toPosix()}
 - All file paths must be relative to this directory. However, commands may change directories in terminals, so respect working directory specified by the response to execute_command.
 - You cannot \`cd\` into a different directory to complete a task. You are stuck operating from '${cwd.toPosix()}', so be sure to pass in the correct 'path' parameter when using tools that require a path.
