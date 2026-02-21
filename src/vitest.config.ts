@@ -14,6 +14,12 @@ export default defineConfig({
 		testTimeout: 20_000,
 		hookTimeout: 20_000,
 		onConsoleLog,
+		include: [
+			"**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}",
+			"../test/phase2/**/*.test.ts",
+			"../test/phase3/**/*.test.ts",
+			"../test/phase4/**/*.test.ts",
+		],
 	},
 	resolve: {
 		alias: {

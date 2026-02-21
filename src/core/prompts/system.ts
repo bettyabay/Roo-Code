@@ -23,6 +23,7 @@ import {
 	addCustomInstructions,
 	markdownFormattingSection,
 	getSkillsSection,
+	getLessonRecordingSection,
 } from "./sections"
 
 // Helper function to get prompt component, filtering out empty objects
@@ -94,6 +95,7 @@ ${getCapabilitiesSection(cwd, shouldIncludeMcp ? mcpHub : undefined)}
 
 ${modesSection}
 ${skillsSection ? `\n${skillsSection}` : ""}
+${getLessonRecordingSection()}
 ${getRulesSection(cwd, settings)}
 
 ${getSystemInfoSection(cwd)}

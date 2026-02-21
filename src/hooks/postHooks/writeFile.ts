@@ -18,6 +18,7 @@ import { appendToTraceLog } from "../utils/traceStorage"
 import { updateIntentMap } from "../utils/intentMap"
 import { getMutationClass } from "../utils/mutationClassifier"
 import { MUTATION_CLASSES } from "../models/trace"
+import { fileStateTracker } from "../utils/fileState"
 
 export interface WriteFilePostHookArgs {
 	path: string
@@ -42,6 +43,8 @@ export interface WriteFilePostHookContext {
 	modelIdentifier?: string
 	/** Previous file content (for mutation classification when mutation_class not provided). */
 	oldContent?: string
+	/** Agent session ID for optimistic locking. */
+	agentId?: string
 	[key: string]: unknown
 }
 
@@ -66,7 +69,7 @@ export async function writeFilePostHook(
 	context: WriteFilePostHookContext,
 ): Promise<void> {
 	const { path: filePath, content, mutation_class: explicitClass } = args
-	const { intentId, workspaceRoot = "", sessionId, modelIdentifier, oldContent } = context
+	const { intentId, workspaceRoot = "", sessionId, modelIdentifier, oldContent, agentId } = context
 
 	if (!intentId) {
 		return
@@ -120,6 +123,16 @@ export async function writeFilePostHook(
 
 		await appendToTraceLog(workspaceRoot, traceEntry)
 		await updateIntentMap(workspaceRoot, intentId, filePath)
+
+		// Release the snapshot after successful write
+		if (agentId && workspaceRoot) {
+			try {
+				fileStateTracker.releaseSnapshot(filePath, agentId, workspaceRoot)
+			} catch (error) {
+				// Don't fail the post-hook if snapshot release fails
+				console.debug(`[writeFilePostHook] Error releasing snapshot for ${filePath}:`, error)
+			}
+		}
 	} catch (error) {
 		console.error("[hooks] writeFilePostHook error:", error)
 	}
