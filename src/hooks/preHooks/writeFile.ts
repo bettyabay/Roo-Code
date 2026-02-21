@@ -1,16 +1,18 @@
 /**
  * Pre-hook for write_file
  *
- * Enforces scope boundaries by:
+ * Enforces optimistic locking and scope boundaries by:
+ * 0. Verifying file hasn't been modified by another agent (optimistic locking)
  * 1. Checking if an intent is active
  * 2. Validating the target file is within the intent's owned_scope
  * 3. Blocking writes outside the scope with clear error messages
  *
- * This is the "Gatekeeper" that prevents scope violations.
+ * This is the "Gatekeeper" that prevents conflicts and scope violations.
  */
 
 import { matchesAnyGlobPattern } from "../utils/pathMatcher"
 import { findIntentById, getCachedIntent } from "../utils/yamlLoader"
+import { fileStateTracker } from "../utils/fileState"
 import type { ActiveIntent } from "../models/orchestration"
 
 export interface WriteFilePreHookArgs {
@@ -22,6 +24,7 @@ export interface WriteFilePreHookContext {
 	intentId: string | null
 	workspaceRoot: string
 	ownedScope?: string[] // Optional cached scope
+	agentId?: string // Agent session ID for optimistic locking
 	[key: string]: unknown
 }
 
@@ -45,8 +48,27 @@ export async function writeFilePreHook(
 	args: WriteFilePreHookArgs,
 	context: WriteFilePreHookContext,
 ): Promise<WriteFilePreHookResult> {
-	const { intentId, workspaceRoot, ownedScope } = context
+	const { intentId, workspaceRoot, ownedScope, agentId } = context
 	const { path: filePath } = args
+
+	// Step 0: Optimistic locking check
+	// Verify that the file hasn't been modified by another agent
+	if (agentId) {
+		try {
+			const isFileValid = await fileStateTracker.verifySnapshot(filePath, agentId, workspaceRoot)
+
+			if (!isFileValid) {
+				return {
+					blocked: true,
+					error: fileStateTracker.getStaleError(filePath, agentId),
+				}
+			}
+		} catch (error) {
+			// If verification fails (e.g., file doesn't exist), log but don't block
+			// The file write will create it or fail naturally
+			console.debug(`[writeFilePreHook] Snapshot verification error for ${filePath}:`, error)
+		}
+	}
 
 	// Step 1: Check if intent is active
 	if (!intentId) {

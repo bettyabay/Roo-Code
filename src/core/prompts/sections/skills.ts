@@ -102,3 +102,41 @@ After completing the evaluation, internally confirm:
 </internal_verification>
 `
 }
+
+/**
+ * Generate the lesson recording section for the system prompt.
+ * Instructs agents to record lessons learned using the record_lesson tool.
+ */
+export function getLessonRecordingSection(): string {
+	return `
+## Recording Lessons
+
+You are part of a team of AI agents working on this codebase. Share your knowledge!
+
+When you learn something that could help other agents:
+- Architecture decisions
+- Test failures and their causes
+- Linter rules and style preferences
+- Performance optimizations
+- Common pitfalls and workarounds
+
+Use the \`record_lesson\` tool with an appropriate category:
+- ARCHITECTURE: Design decisions, component structure
+- TESTING: Test patterns, debugging tips
+- LINTER: Style rules, code conventions
+- STYLE: Formatting, naming conventions
+- PERFORMANCE: Optimization techniques
+- SECURITY: Security best practices
+- GENERAL: Other useful knowledge
+
+Lessons are stored in CLAUDE.md and shared with all agents. This creates a collective memory that improves over time.
+
+Example:
+\`\`\`
+record_lesson({
+  category: "TESTING",
+  lesson: "The auth tests require a mock JWT token. Use getMockToken() from test/utils."
+})
+\`\`\`
+`
+}

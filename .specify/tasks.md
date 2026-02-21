@@ -12,6 +12,7 @@ Generated from specs and plans. Use **speckit.tasks** to refresh or regenerate.
 | [002-intent-system](specs/002-intent-system/spec.md)                       | [002-intent-system/tasks.md](specs/002-intent-system/tasks.md)                       | Intent IDs (INT-XXX), scope, constraints, acceptance criteria, `select_active_intent` tool, gatekeeper, `active_intents.yaml`                      |
 | [003-hook-middleware-security](specs/003-hook-middleware-security/spec.md) | [003-hook-middleware-security/tasks.md](specs/003-hook-middleware-security/tasks.md) | Hook middleware security boundary, scope enforcement, tool classification (SAFE/DESTRUCTIVE), UI-blocking authorization, structured error recovery |
 | [004-ai-native-git-layer](specs/004-ai-native-git-layer/spec.md)           | [004-ai-native-git-layer/tasks.md](specs/004-ai-native-git-layer/tasks.md)           | Phase 3: spatial hashing, mutation classification, agent_trace.jsonl, intent_map.md, writeFilePostHook integration, git revision                   |
+| [005-parallel-orchestration](specs/005-parallel-orchestration/spec.md)     | [005-parallel-orchestration/tasks.md](specs/005-parallel-orchestration/tasks.md)     | Phase 4: optimistic locking, file state tracking, lesson recording, shared brain (CLAUDE.md), multi-agent collaboration, conflict detection        |
 
 ---
 
