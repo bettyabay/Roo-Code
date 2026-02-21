@@ -8,7 +8,7 @@ export default defineConfig({
 	test: {
 		globals: true,
 		environment: "node",
-		include: ["test/phase2/**/*.test.ts"],
+		include: ["test/phase2/**/*.test.ts", "test/phase3/**/*.test.ts"],
 		setupFiles: [path.join(root, "src/vitest.setup.ts")],
 		testTimeout: 20_000,
 		hookTimeout: 20_000,
